@@ -1,0 +1,35 @@
+name: K8s Pods Monitor
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  check-pods:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'v1.31.0'
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+
+      - name: Check pod status
+        run: |
+          echo "=== Checking pod status in all namespaces ==="
+          kubectl get pods -A
+          
+          FAILED=$(kubectl get pods -A --no-headers | grep -E "CrashLoopBackOff|Error|Failed|ImagePullBackOff|Pending" || true)
+          
+          if [ -n "$FAILED" ]; then
+            echo "❌ PROBLEM DETECTED: Found unhealthy pods!"
+            echo "$FAILED"
+            exit 1
+          else
+            echo "✅ All pods are healthy"
+          fi
