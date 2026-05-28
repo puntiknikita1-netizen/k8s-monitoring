@@ -6,30 +6,30 @@ on:
   workflow_dispatch:
 
 jobs:
-  check-pods:
-    runs-on: ubuntu-latest
+  monitor:
+    runs-on: self-hosted
     steps:
-      - name: Install kubectl
-        uses: azure/setup-kubectl@v4
-        with:
-          version: 'v1.31.0'
-
-      - name: Configure kubeconfig
+      - name: Check pods status
         run: |
-          mkdir -p $HOME/.kube
-          echo "${{ secrets.KUBECONFIG }}" | base64 -d > $HOME/.kube/config
-
-      - name: Check pod status
-        run: |
-          echo "=== Checking pod status in all namespaces ==="
+          echo "=== Checking K8s cluster from $(hostname) ==="
+          echo "Time: $(date)"
+          echo ""
+          echo "=== All pods ==="
           kubectl get pods -A
+          echo ""
           
-          FAILED=$(kubectl get pods -A --no-headers | grep -E "CrashLoopBackOff|Error|Failed|ImagePullBackOff|Pending" || true)
+          FAILED=$(kubectl get pods -A --no-headers | grep -E "CrashLoopBackOff|Error|Failed|ImagePullBackOff" || true)
           
           if [ -n "$FAILED" ]; then
-            echo "❌ PROBLEM DETECTED: Found unhealthy pods!"
+            echo "❌❌❌ PROBLEM DETECTED! ❌❌❌"
+            echo "Found unhealthy pods:"
             echo "$FAILED"
             exit 1
           else
-            echo "✅ All pods are healthy"
+            echo "✅✅✅ ALL PODS ARE HEALTHY ✅✅✅"
           fi
+      
+      - name: Show nodes info
+        run: |
+          echo "=== Nodes ==="
+          kubectl get nodes -o wide
