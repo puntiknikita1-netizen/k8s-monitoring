@@ -8,7 +8,19 @@ on:
 jobs:
   monitor:
     runs-on: self-hosted
+    env:
+      KUBECONFIG: /home/nik/.kube/config-k3s:/home/nik/.kube/config-k8s
     steps:
+      - name: Show kubeconfig path
+        run: |
+          echo "KUBECONFIG=$KUBECONFIG"
+          ls -la ${{ env.KUBECONFIG }} || echo "Files not found"
+      
+      - name: Show current context
+        run: |
+          kubectl config get-contexts
+          kubectl config current-context
+      
       - name: Check pods status
         run: |
           echo "=== Checking K8s cluster from $(hostname) ==="
@@ -16,13 +28,11 @@ jobs:
           echo ""
           echo "=== All pods ==="
           kubectl get pods -A
-          echo ""
           
           FAILED=$(kubectl get pods -A --no-headers | grep -E "CrashLoopBackOff|Error|Failed|ImagePullBackOff" || true)
           
           if [ -n "$FAILED" ]; then
             echo "❌❌❌ PROBLEM DETECTED! ❌❌❌"
-            echo "Found unhealthy pods:"
             echo "$FAILED"
             exit 1
           else
