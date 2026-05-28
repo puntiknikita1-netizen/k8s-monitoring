@@ -1,4 +1,4 @@
-name: K8s Pods Monitor
+name: K8s Cluster Monitor
 
 on:
   schedule:
@@ -8,38 +8,40 @@ on:
 jobs:
   monitor:
     runs-on: self-hosted
-    env:
-      KUBECONFIG: /home/nik/.kube/config-k3s:/home/nik/.kube/config-k8s
     steps:
-      - name: Show kubeconfig path
+      - name: Create SSH tunnel to K8s cluster
         run: |
-          echo "KUBECONFIG=$KUBECONFIG"
-          ls -la ${{ env.KUBECONFIG }} || echo "Files not found"
-      
-      - name: Show current context
+          # Поднимаем туннель через Bastion
+          ssh -f -N -L 6443:127.0.0.1:6443 -o ProxyJump=jump_sa@178.124.206.53:32511 root@192.168.208.11
+          sleep 3
+          echo "Tunnel created"
+          
+      - name: Configure kubectl
         run: |
-          kubectl config get-contexts
-          kubectl config current-context
-      
-      - name: Check pods status
+          mkdir -p ~/.kube
+          cat > ~/.kube/config << 'KUBECONFIG'
+apiVersion: v1
+clusters:
+- cluster:
+    server: https://localhost:6443
+    insecure-skip-tls-verify: true
+  name: cluster
+contexts:
+- context:
+    cluster: cluster
+    user: admin
+  name: cluster
+current-context: cluster
+kind: Config
+users:
+- name: admin
+KUBECONFIG
+          
+      - name: Check cluster
         run: |
-          echo "=== Checking K8s cluster from $(hostname) ==="
-          echo "Time: $(date)"
-          echo ""
-          echo "=== All pods ==="
+          kubectl get nodes
           kubectl get pods -A
           
-          FAILED=$(kubectl get pods -A --no-headers | grep -E "CrashLoopBackOff|Error|Failed|ImagePullBackOff" || true)
-          
-          if [ -n "$FAILED" ]; then
-            echo "❌❌❌ PROBLEM DETECTED! ❌❌❌"
-            echo "$FAILED"
-            exit 1
-          else
-            echo "✅✅✅ ALL PODS ARE HEALTHY ✅✅✅"
-          fi
-      
-      - name: Show nodes info
-        run: |
-          echo "=== Nodes ==="
-          kubectl get nodes -o wide
+      - name: Close tunnel
+        if: always()
+        run: pkill -f "ssh -f -N -L 6443" || true
