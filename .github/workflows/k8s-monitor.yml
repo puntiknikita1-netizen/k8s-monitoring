@@ -1,47 +1,88 @@
-name: K8s Cluster Monitor
+name: K8s Pods Status
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '*/10 * * * *'
   workflow_dispatch:
 
 jobs:
   monitor:
     runs-on: self-hosted
     steps:
-      - name: Create SSH tunnel to K8s cluster
+      - name: Create SSH tunnel via Bastion
         run: |
-          # Поднимаем туннель через Bastion
-          ssh -f -N -L 6443:127.0.0.1:6443 -o ProxyJump=jump_sa@178.124.206.53:32511 root@192.168.208.11
+          # Запускаем туннель в фоне (порт 6443 -> API сервер)
+          ssh -f -N -L 6443:localhost:6443 -o ProxyJump=jump_sa@178.124.206.53:32511 root@192.168.208.11
           sleep 3
-          echo "Tunnel created"
+          echo "SSH tunnel established"
           
-      - name: Configure kubectl
+      - name: Setup kubectl config
         run: |
           mkdir -p ~/.kube
-          cat > ~/.kube/config << 'KUBECONFIG'
+          cat > ~/.kube/config << 'END'
 apiVersion: v1
 clusters:
 - cluster:
     server: https://localhost:6443
     insecure-skip-tls-verify: true
-  name: cluster
+  name: k8s
 contexts:
 - context:
-    cluster: cluster
+    cluster: k8s
     user: admin
-  name: cluster
-current-context: cluster
+  name: k8s
+current-context: k8s
 kind: Config
 users:
 - name: admin
-KUBECONFIG
+END
+          echo "kubectl configured"
           
-      - name: Check cluster
+      - name: Check cluster connection
         run: |
+          echo "=== Checking cluster connection ==="
+          kubectl cluster-info
           kubectl get nodes
+          
+      - name: Get pods status
+        run: |
+          echo "=== All pods in cluster ==="
           kubectl get pods -A
           
-      - name: Close tunnel
+      - name: Check for unhealthy pods
+        id: check
+        run: |
+          FAILED=$(kubectl get pods -A --no-headers | grep -E "CrashLoopBackOff|Error|Failed|ImagePullBackOff|Pending" || true)
+          if [ -n "$FAILED" ]; then
+            echo "status=unhealthy" >> $GITHUB_OUTPUT
+            echo "❌ UNHEALTHY PODS FOUND:"
+            echo "$FAILED"
+          else
+            echo "status=healthy" >> $GITHUB_OUTPUT
+            echo "✅ ALL PODS ARE HEALTHY"
+          fi
+          
+      - name: Show summary
+        run: |
+          echo "## K8s Cluster Status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          kubectl get nodes >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          kubectl get pods -A >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          
+      - name: Close SSH tunnel
         if: always()
-        run: pkill -f "ssh -f -N -L 6443" || true
+        run: |
+          pkill -f "ssh -f -N -L 6443" || true
+          echo "SSH tunnel closed"
+          
+      - name: Final status
+        run: |
+          if [ "${{ steps.check.outputs.status }}" == "unhealthy" ]; then
+            echo "❌ Workflow FAILED: Unhealthy pods detected"
+            exit 1
+          else
+            echo "✅ Workflow SUCCESS: All pods healthy"
+          fi
